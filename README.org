@@ -1,0 +1,41 @@
+* gitws - git smart transport via http and websockets
+
+** Introduction
+
+   The code which can be found here is a proof of concept showing that
+   using http and websockets as the transport for the smart git protocol
+   is possible and works.
+
+   As such performance may be sub-optimal and the code may be unstable at times.
+
+** Requirements
+   
+   - git
+   - Python
+   - [[http://pypi.python.org/pypi/websocket-client/0.7.0][websocket-client]]
+   - [[http://pypi.python.org/pypi/gevent-websocket/0.3.6][gevent-websocket]]
+
+** Usage
+   
+   At first you should start your gitws server in the directory you want
+   to work with. This can either be a directory containing a repository itself
+   or a directory containing multiple repositories.
+
+   For the simple case, let us assume you have cloned this repository to
+   /home/user/gitws/ and you want to publish that one.
+   Change to that directory and run "/home/user/gitws/gitws-server.py".
+
+   Now that the server is up you probably want to try cloning that repository.
+   From /home/user/, run "GIT_SSH=/home/user/gitws/bin/gitws_ssh.sh git clone 8000@127.0.0.1:gitws/.git"
+
+   Done.
+
+** How it works
+
+   Basically gitws operates the same way git's ssh smart transport works, the
+   only difference is that the communication is carried out via a websocket.
+   
+   Using the GIT_SSH environment variable one can modify the binary git
+   calls when an SSH connection should be established.
+   This is the point we (ab-)use here, allowing us to "inject" a fake
+   ssh client, which communicates via a websocket.
