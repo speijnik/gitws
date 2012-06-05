@@ -130,13 +130,17 @@ class Client(object):
 
     def websocketHandler(self, event):
         if (event & select.POLLIN) > 0:
-            data = self.ws.recv()
-            if not data:
-                LOG.debug('[WebSocket] Received empty data, connection closed.')
+            try:
+                data = self.ws.recv()
+                if not data:
+                    LOG.debug('[WebSocket] Received empty data, connection closed.')
+                    return False
+                LOG.debug('[WebSocket] "%s"', data)
+                sys.stdout.write(data)
+                sys.stdout.flush()
+            except websocket.WebSocketException:
+                LOG.debug('[WebSocket] Exception during recv, assuming connection closed.')
                 return False
-            LOG.debug('[WebSocket] "%s"', data)
-            sys.stdout.write(data)
-            sys.stdout.flush()
 
         if (event & select.POLLHUP) > 0:
             LOG.debug('WebSocket closed. Closing stdin.')
