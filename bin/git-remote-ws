@@ -1,3 +1,4 @@
+#!/bin/sh
 # Copyright (C) 2012 Stephan Peijnik
 #
 # This program is free software: you can redistribute it and/or modify
@@ -13,7 +14,9 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-__version__ = '0.1'
-__author__ = 'Stephan Peijnik <stephan@peijnik.at>'
-
-from gitws.client import Client
+if [ -z "$GITWS_CLIENT" ] 
+then
+    GITWS_CLIENT=`which gitws-client`
+fi
+GIT_REMOTE_EXT=`dirname $0`/git-remote-ext
+exec $GIT_REMOTE_EXT ext "$GITWS_CLIENT $1 $2"

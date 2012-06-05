@@ -1,4 +1,3 @@
-#!/usr/bin/env python
 # Copyright (C) 2012 Stephan Peijnik
 #
 # This program is free software: you can redistribute it and/or modify
@@ -14,121 +13,138 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-import sys
 import fcntl
-import os
 import logging
+import os
 import select
-import websocket
-import threading
+import socket
+import sys
 
-HELPER=os.path.join(os.path.abspath(os.path.dirname(__file__)), 'helper.py')
+SUPPORTED_PROTOCOLS = ('ws', 'wss')
+EXIT_OK = 0
+EXIT_PROTO_UNSUPPORTED = 1
+EXIT_SERVICE_UNSUPPORTED = 2
+EXIT_CONNECTION_FAILED = 3
+EXIT_INTERNAL_ERROR = 255
+
+def writeError(msg, *args):
+    message = msg % args
+    sys.stderr.write('fatal: %s\n' % (message))
+    sys.stderr.flush()
+
+try:
+    import websocket
+except ImportError:
+    writeError('websocket Python package is missing.')
+    sys.exit(EXIT_INTERNAL_ERROR)
 
 LOG = logging.getLogger('gitws.client')
 
-class WSClient(websocket.WebSocketApp):
-    def __init__(self, uri, method):
-        if not uri.endswith('/'):
-            uri = uri + '/'
+class Client(object):
+    def __init__(self, protocol, uri):
+        self._protocol = protocol
         self._uri = uri
-        self._method = method
-        if method not in ('download', 'upload'):
-            raise Exception('Invalid method %s.' % (method))
-            
-        self._uri_full = uri + ':' + method
-        self._closed = False
-        websocket.WebSocketApp.__init__(self, self._uri_full,
-                                        on_error = self._on_error,
-                                        on_close = self._on_close,
-                                        on_message = self._on_message)
-        LOG.debug('Client created, full uri is %s.', self._uri_full)
+
+    def getServiceMethod(self):
+        if not os.environ.has_key('GIT_EXT_SERVICE_NOPREFIX'):
+            writeError('GIT_EXT_SERVICE_NOPREFIX environment variable not set.')
+            sys.exit(EXIT_SERVICE_UNSUPPORTED)
+        serviceName = os.environ['GIT_EXT_SERVICE_NOPREFIX']
+        serviceName = serviceName[0].upper() + serviceName[1:]
+        while '-' in serviceName:
+            idx = serviceName.index('-')
+            serviceName = serviceName[0:idx] + serviceName[idx+1:]
+            serviceName = serviceName[0:idx] + serviceName[idx].upper() \
+                + serviceName[idx+1:]
+        methodName = 'handle%s' % (serviceName)
+        LOG.debug('Service handler method name: %s.', methodName)
+        method = getattr(self, methodName, None)
+        if not method or not callable(method):
+            writeError('Service %s is not supported.', 
+                       os.environ['GIT_EXT_SERVICE_NOPREFIX'])
+            sys.exit(EXIT_SERVICE_UNSUPPORTED)
+        return method
 
     def run(self):
-        if self._method == 'download':
-            return self.run_download()
-        elif self._method == 'upload':
-            return self.run_upload()
+        if self._protocol not in SUPPORTED_PROTOCOLS:
+            writeError('Unsupported protocol "%s".', self._protocol)
+            return EXIT_PROTO_UNSUPPORTED
+        method = self.getServiceMethod()
+        LOG.debug('Service handler method: %r.', method)
+        return method(self._protocol, self._uri)
 
-    def run_download(self):
-        self.on_open = self.on_open_download
-        self.run_forever()
+    def setNonblocking(self, fd):
+        flags = fcntl.fcntl(fd, fcntl.F_GETFL)
+        fcntl.fcntl(fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
 
-    def run_upload(self):
-        raise NotImplementedError
-        #self.on_open = self.on_open_download
-        #self.run_forever()
+    def handleUploadPack(self, protocol, uri):
+        full_uri = uri + ':upload-pack'
+        poll = select.poll()
+        self.setNonblocking(sys.stdin.fileno())
+        self.ws = None
+        try:
+            LOG.debug('Connecting to %s...', full_uri)
+            self.ws = websocket.create_connection(full_uri)
+        except socket.error, e:
+            LOG.error('Connection failed: %s', e)
+            writeError('Connection failed: %s', e)
+            return EXIT_CONNECTION_FAILED
+        LOG.debug('websocket connection established.')
+        self.setNonblocking(self.ws.sock.fileno())
+        LOG.debug('stdin and websocket set nonblocking.')
 
-    def _on_message(self, ws, message):
-        if not message:
-            message = ''
-        LOG.debug('WebSocket: "%s"', message)
-        sys.stdout.write(message)
-        sys.stdout.flush()
-
-    def _on_error(self, ws, error):
-        LOG.error('WebSocket error: %s', error)
-        ws.close()
-
-    def _on_close(self, ws):
-        LOG.debug('Connection to %s closed.', self._uri_full)
-        self._closed = True
-
-    def on_open_download(self, ws):
-        LOG.debug('Connection to %s opened, DOWNLOAD mode.', self._uri_full)
-        self._closed = False
-        t = threading.Thread(target=self.reader_main)
-        t.start()
-    
-    def reader_main(self):
-        LOG.debug('Reader thread has started...')
-        flags = fcntl.fcntl(sys.stdin.fileno(), fcntl.F_GETFL)
-        fcntl.fcntl(sys.stdin.fileno(), fcntl.F_SETFL, flags | os.O_NONBLOCK)
-        while not self._closed:
-            try:
-                data = sys.stdin.read()
-                LOG.debug('Data on stdin: "%s"', data)
-                if data:
-                    self.send(data)
-                else:
-                    break
-            except IOError:
-                pass
-        LOG.debug('Connection closed.')
-        if self.sock:
-            self.close()
-    
-
-class Client(object):
-    def __init__(self, uri):
-        LOG.debug('Client for initialized (uri=%s).', uri)
-        self._uri = uri
-
-    def download(self):
-        c = WSClient(self._uri, 'download')
-        c.run()
-
-if __name__ == '__main__':
-    logging.basicConfig(level=logging.DEBUG, filename='client.log')
-    host = sys.argv[1]
-    port = 8000
-    if '@' in host:
-        port, host = host.split('@', 1)
-    repo_data = sys.argv[2].split(' ')
-    repo = repo_data[1][1:-1]
-    LOG.debug('Config: %r' % sys.argv)
-    method = None
-    if repo_data[0] == 'git-upload-pack':
-        method = 'download'
-    else:
-        sys.stderr.write('fatal: Cannot detect method from %s.' \
-                             % (repo_data[0]))
-        sys.exit(1)
+        fdHandlers = {sys.stdin.fileno(): self.stdinHandler,
+                      self.ws.sock.fileno(): self.websocketHandler}
+        poll.register(sys.stdin.fileno(), select.POLLIN|select.POLLHUP)
+        poll.register(self.ws.sock.fileno(), select.POLLIN|select.POLLHUP)
         
-    c = Client('ws://%s:%s/%s' % (host, port, repo))
-    meth = getattr(c, method, None)
-    if meth and callable(meth):
-        meth()
-    else:
-        sys.stderr.write('fatal: Method %s not supported.', method)
-        sys.exit(2)
-    
+        connection_closed = False
+        while not connection_closed:
+            for (fd, event) in poll.poll(200):
+                if not fdHandlers[fd](event):
+                    LOG.debug('Connection closed by FD handler %r.',
+                              fdHandlers[fd])
+                    connection_closed = True
+        
+        return EXIT_OK
+
+    def stdinHandler(self, event):
+        if (event & select.POLLIN) > 0:
+            data = sys.stdin.read()
+            if not data:
+                LOG.debug('[STDIN] Received empty data, possibly closed.')
+                return False
+            LOG.debug('[STDIN] "%s"', data)
+            self.ws.send(data)
+
+        if (event & select.POLLHUP) > 0:
+            LOG.debug('[STDIN] closed. Closing websocket connection.')
+            self.ws.close()
+            return False
+        
+        if (event & (select.POLLHUP|select.POLLIN)) == 0:
+            LOG.debug('[STDIN] Unknown event %s.', event)
+            return False
+
+        return True
+
+    def websocketHandler(self, event):
+        if (event & select.POLLIN) > 0:
+            data = self.ws.recv()
+            if not data:
+                LOG.debug('[WebSocket] Received empty data, connection closed.')
+                return False
+            LOG.debug('[WebSocket] "%s"', data)
+            sys.stdout.write(data)
+            sys.stdout.flush()
+
+        if (event & select.POLLHUP) > 0:
+            LOG.debug('WebSocket closed. Closing stdin.')
+            sys.stdin.close()
+            return False
+
+        if (event & (select.POLLIN|select.POLLHUP)) == 0:
+            LOG.debug('[WebSocket] Unknown event %s.', event)
+            return False
+        return True
+        

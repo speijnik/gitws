@@ -23,7 +23,7 @@ import fcntl
 LOG = logging.getLogger('gitws.server')
 
 def ws_send_error(ws, error):
-    ws.send('e::%s' % (error))
+    ws.send('%.4x\x02%s\n' % (len(error)+1, error))
     ws.close()
 
 class RepositoryWSHandler(object):
@@ -35,9 +35,9 @@ class RepositoryWSHandler(object):
         self._start_response = start_response
 
     def handle(self):
-        if self._method == 'download':
+        if self._method == 'upload-pack':
             self.handleDownload()
-        elif self._method == 'upload':
+        elif self._method == 'receive-pack':
             self.handleUpload()
         else:
             ws_send_error(self._ws, 'Unknown method %s.' % (self._method))
@@ -72,16 +72,17 @@ class RepositoryWSHandler(object):
             for (fd, evmask) in poller.poll(100):
                 if fd == p.stdout.fileno():
                     LOG.debug('Data on stdout...')
-                    while True:
+                    again = True
+                    while again:
                         try:
                             data = p.stdout.read()
                             LOG.debug('Read from stdin: "%s"', data)
                             if not data:
-                                break
-                            self._ws.send(data)
+                                again = False
+                            else:
+                                self._ws.send(data)
                         except IOError:
-                            break
-
+                            again = False
                 elif fd == p.stderr.fileno():
                     LOG.debug('Data on stderr...')
                     stderrbuf += p.stderr.read()
@@ -157,7 +158,7 @@ class GitWSApp(object):
             return
 
         repository, method = repository.split(':', 1)
-        if method not in ('upload', 'download'):
+        if method not in ('upload-pack', 'receive-pack'):
             LOG.error('Invalid method %s in path.',
                       method)
             ws_send_error(ws, 'Invalid method %s.' % (method))
