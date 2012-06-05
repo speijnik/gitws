@@ -25,8 +25,21 @@
    /home/user/gitws/ and you want to publish that one.
    Change to that directory and run "/home/user/gitws/gitws-server.py".
 
-   Now that the server is up you probably want to try cloning that repository.
-   From /home/user/, run "GIT_SSH=/home/user/gitws/bin/gitws_ssh.sh git clone 8000@127.0.0.1:gitws/.git"
+   For the client to work you need a few pieces in place. First, you need
+   the git-remote-ws binary copied or symlinked to the path holding the 
+   git-* binaries (Debian/Ubuntu: "/usr/lib/git-core/"). You then need
+   bin/gitws-client somewhere on your path 
+   (you could symlink it to /usr/local/lib/, for example).
+   Do not forget that the gitws Python module needs to be on your PYTHONPATH
+   too.
+
+   Once these are in place you can go ahead and run 
+   "git clone ws://127.0.0.1:8000/gitws/.git gitws_clone", which will go ahead
+   and clone your repository over the WebSocket connection.
+   Further calls to git pull, etc. will also use the WebSocket connection.
+   
+   If you want to know what is going on inside the client go ahead and
+   set the GITWS_LOG environment variable to "debug".
 
    Done.
 
@@ -35,7 +48,5 @@
    Basically gitws operates the same way git's ssh smart transport works, the
    only difference is that the communication is carried out via a websocket.
    
-   Using the GIT_SSH environment variable one can modify the binary git
-   calls when an SSH connection should be established.
-   This is the point we (ab-)use here, allowing us to "inject" a fake
-   ssh client, which communicates via a websocket.
+   The second approach for this implementation uses a customized git-remote-*
+   binary, which calls gitws-client and lets it do its job.
