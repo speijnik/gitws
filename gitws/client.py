@@ -41,9 +41,9 @@ except ImportError:
 LOG = logging.getLogger('gitws.client')
 
 class Client(object):
-    def __init__(self, protocol, uri):
-        self._protocol = protocol
+    def __init__(self, uri):
         self._uri = uri
+        self._protocol, unused = self._uri.split('://', 1)
 
     def getServiceMethod(self):
         if not os.environ.has_key('GIT_EXT_SERVICE_NOPREFIX'):
@@ -68,6 +68,7 @@ class Client(object):
     def run(self):
         if self._protocol not in SUPPORTED_PROTOCOLS:
             writeError('Unsupported protocol "%s".', self._protocol)
+            writeError('argv: %r', sys.argv)
             return EXIT_PROTO_UNSUPPORTED
         method = self.getServiceMethod()
         LOG.debug('Service handler method: %r.', method)

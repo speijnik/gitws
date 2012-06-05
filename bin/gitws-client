@@ -41,8 +41,7 @@ if __name__ == '__main__':
         logging.basicConfig(level=logging.FATAL,
                             stream=open('/dev/null', 'w'))
 
-    protocol = sys.argv[1]
     uri = sys.argv[2]
-    client = gitws.Client(protocol, uri)
+    client = gitws.Client(uri)
     sys.exit(client.run())
 
